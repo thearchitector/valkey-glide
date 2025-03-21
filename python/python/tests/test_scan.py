@@ -8,6 +8,7 @@ from glide.config import ProtocolVersion
 from glide.exceptions import RequestError
 from glide.glide import ClusterScanCursor
 from glide.glide_client import GlideClient, GlideClusterClient
+
 from tests.conftest import create_client
 from tests.utils.cluster import ValkeyCluster
 from tests.utils.utils import get_random_string
@@ -92,7 +93,7 @@ async def glide_client_scoped(
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestScan:
     # Cluster scan tests
     @pytest.mark.parametrize("cluster_mode", [True])

@@ -8,10 +8,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from glide.async_commands.core import CoreCommands
 from glide.exceptions import ConfigurationError
-from glide.protobuf.connection_request_pb2 import ConnectionRequest
+from glide.protobuf.connection_request_pb2 import ConnectionRequest, TlsMode
 from glide.protobuf.connection_request_pb2 import ProtocolVersion as SentProtocolVersion
 from glide.protobuf.connection_request_pb2 import ReadFrom as ProtobufReadFrom
-from glide.protobuf.connection_request_pb2 import TlsMode
 
 
 class NodeAddress:
@@ -292,7 +291,6 @@ class AdvancedGlideClientConfiguration(AdvancedBaseClientConfiguration):
     """
 
     def __init__(self, connection_timeout: Optional[int] = None):
-
         super().__init__(connection_timeout)
 
 
@@ -408,7 +406,6 @@ class GlideClientConfiguration(BaseClientConfiguration):
     def _create_a_protobuf_conn_request(
         self, cluster_mode: bool = False
     ) -> ConnectionRequest:
-        assert cluster_mode is False
         request = super()._create_a_protobuf_conn_request(cluster_mode)
         if self.reconnect_strategy:
             request.connection_retry_strategy.number_of_retries = (

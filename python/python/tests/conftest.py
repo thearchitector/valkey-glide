@@ -1,6 +1,7 @@
 # Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
 import random
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator, List, Optional, Union
 
 import pytest
@@ -20,8 +21,11 @@ from glide.glide_client import GlideClient, GlideClusterClient, TGlideClient
 from glide.logger import Level as logLevel
 from glide.logger import Logger
 from glide.routes import AllNodes
+
 from tests.utils.cluster import ValkeyCluster
 from tests.utils.utils import check_if_server_version_lt
+
+pytestmark = pytest.mark.anyio
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 6379
@@ -218,12 +222,11 @@ async def glide_client(
     protocol: ProtocolVersion,
 ) -> AsyncGenerator[TGlideClient, None]:
     "Get async socket client for tests"
-    client = await create_client(
+    async with create_client(
         request, cluster_mode, protocol=protocol, request_timeout=5000
-    )
-    yield client
+    ) as client:
+        yield client
     await test_teardown(request, cluster_mode, protocol)
-    await client.close()
 
 
 @pytest.fixture(scope="function")
@@ -233,12 +236,12 @@ async def management_client(
     protocol: ProtocolVersion,
 ) -> AsyncGenerator[TGlideClient, None]:
     "Get async socket client for tests, used to manage the state when tests are on the client ability to connect"
-    client = await create_client(request, cluster_mode, protocol=protocol)
-    yield client
+    async with create_client(request, cluster_mode, protocol=protocol) as client:
+        yield client
     await test_teardown(request, cluster_mode, protocol)
-    await client.close()
 
 
+@asynccontextmanager
 async def create_client(
     request,
     cluster_mode: bool,
@@ -282,7 +285,8 @@ async def create_client(
             client_az=client_az,
             advanced_config=AdvancedGlideClusterClientConfiguration(connection_timeout),
         )
-        return await GlideClusterClient.create(cluster_config)
+        async with GlideClusterClient(cluster_config) as client:
+            yield client
     else:
         assert type(pytest.standalone_cluster) is ValkeyCluster
         config = GlideClientConfiguration(
@@ -302,7 +306,8 @@ async def create_client(
             advanced_config=AdvancedGlideClientConfiguration(connection_timeout),
             reconnect_strategy=reconnect_strategy,
         )
-        return await GlideClient.create(config)
+        async with GlideClient(config) as client:
+            yield client
 
 
 NEW_PASSWORD = "new_secure_password"
@@ -352,32 +357,28 @@ async def test_teardown(request, cluster_mode: bool, protocol: ProtocolVersion):
     credentials = None
     try:
         # Try connecting without credentials
-        client = await create_client(
+        async with create_client(
             request, cluster_mode, protocol=protocol, request_timeout=2000
-        )
-        await client.custom_command(["FLUSHALL"])
-        await client.close()
+        ) as client:
+            await client.custom_command(["FLUSHALL"])
     except ClosingError as e:
         # Check if the error is due to authentication
         if "NOAUTH" in str(e):
             # Use the known password to authenticate
             credentials = ServerCredentials(password=NEW_PASSWORD)
-            client = await create_client(
+            async with create_client(
                 request,
                 cluster_mode,
                 protocol=protocol,
                 request_timeout=2000,
                 credentials=credentials,
-            )
-            try:
+            ) as client:
                 await auth_client(client, NEW_PASSWORD)
                 # Reset the server password back to empty
                 await config_set_new_password(client, "")
                 await client.update_connection_password(None)
                 # Perform the teardown
                 await client.custom_command(["FLUSHALL"])
-            finally:
-                await client.close()
         else:
             raise e
 
@@ -394,9 +395,17 @@ async def skip_if_version_below(request):
     """
     if request.node.get_closest_marker("skip_if_version_below"):
         min_version = request.node.get_closest_marker("skip_if_version_below").args[0]
-        client = await create_client(request, False)
-        if await check_if_server_version_lt(client, min_version):
+
+        async with create_client(request, False) as client:
+            skip = await check_if_server_version_lt(client, min_version)
+
+        if skip:
             pytest.skip(
                 reason=f"This feature added in version {min_version}",
                 allow_module_level=True,
             )
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"

@@ -16,6 +16,7 @@ from glide.config import (
 from glide.constants import OK
 from glide.exceptions import ConfigurationError
 from glide.glide_client import GlideClient, GlideClusterClient, TGlideClient
+
 from tests.conftest import create_client
 from tests.utils.utils import check_if_server_version_lt, get_random_string
 
@@ -199,7 +200,7 @@ async def client_cleanup(
     await asyncio.sleep(1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestPubSub:
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize(
@@ -1081,12 +1082,13 @@ class TestPubSub:
                 context=context,
             )
 
-            listening_client_exact, publishing_client = (
-                await create_two_clients_with_pubsub(
-                    request,
-                    cluster_mode,
-                    pub_sub_exact,
-                )
+            (
+                listening_client_exact,
+                publishing_client,
+            ) = await create_two_clients_with_pubsub(
+                request,
+                cluster_mode,
+                pub_sub_exact,
             )
 
             callback_messages_pattern: List[CoreCommands.PubSubMsg] = []
@@ -1103,10 +1105,11 @@ class TestPubSub:
                 context=context,
             )
 
-            listening_client_pattern, client_dont_care = (
-                await create_two_clients_with_pubsub(
-                    request, cluster_mode, pub_sub_pattern
-                )
+            (
+                listening_client_pattern,
+                client_dont_care,
+            ) = await create_two_clients_with_pubsub(
+                request, cluster_mode, pub_sub_pattern
             )
 
             # Publish messages to all channels
@@ -1389,12 +1392,13 @@ class TestPubSub:
                 context=context,
             )
 
-            listening_client_exact, publishing_client = (
-                await create_two_clients_with_pubsub(
-                    request,
-                    cluster_mode,
-                    pub_sub_exact,
-                )
+            (
+                listening_client_exact,
+                publishing_client,
+            ) = await create_two_clients_with_pubsub(
+                request,
+                cluster_mode,
+                pub_sub_exact,
             )
 
             if method == MethodTesting.Callback:
@@ -1424,10 +1428,11 @@ class TestPubSub:
                 context=context,
             )
 
-            listening_client_pattern, listening_client_sharded = (
-                await create_two_clients_with_pubsub(
-                    request, cluster_mode, pub_sub_pattern, pub_sub_sharded
-                )
+            (
+                listening_client_pattern,
+                listening_client_sharded,
+            ) = await create_two_clients_with_pubsub(
+                request, cluster_mode, pub_sub_pattern, pub_sub_sharded
             )
 
             # Publish messages to all channels
@@ -1592,12 +1597,13 @@ class TestPubSub:
                 context=context,
             )
 
-            listening_client_exact, publishing_client = (
-                await create_two_clients_with_pubsub(
-                    request,
-                    cluster_mode,
-                    pub_sub_exact,
-                )
+            (
+                listening_client_exact,
+                publishing_client,
+            ) = await create_two_clients_with_pubsub(
+                request,
+                cluster_mode,
+                pub_sub_exact,
             )
 
             # Setup PUBSUB for pattern channel
@@ -1632,10 +1638,11 @@ class TestPubSub:
                 context=context,
             )
 
-            listening_client_pattern, listening_client_sharded = (
-                await create_two_clients_with_pubsub(
-                    request, cluster_mode, pub_sub_pattern, pub_sub_sharded
-                )
+            (
+                listening_client_pattern,
+                listening_client_sharded,
+            ) = await create_two_clients_with_pubsub(
+                request, cluster_mode, pub_sub_pattern, pub_sub_sharded
             )
 
             # Publish messages to each channel

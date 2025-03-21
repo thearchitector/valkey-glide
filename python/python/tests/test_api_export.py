@@ -31,6 +31,7 @@ excluded_symbol_list = [
     # python/python/glide/glide_client.py
     "get_request_error_class",  # FunctionDef
     "BaseClient",  # ClassDef
+    "Result",  # ClassDef
     # python/python/glide/routes.py
     "to_protobuf_slot_type",  # FunctionDef
     "set_protobuf_route",  # FunctionDef

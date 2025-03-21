@@ -83,6 +83,7 @@ from glide.routes import (
     SlotKeyRoute,
     SlotType,
 )
+
 from tests.conftest import create_client
 from tests.utils.utils import (
     check_function_list_response,
@@ -101,8 +102,10 @@ from tests.utils.utils import (
     round_values,
 )
 
+pytestmark = pytest.mark.anyio
 
-@pytest.mark.asyncio
+
+@pytest.mark.anyio
 class TestGlideClients:
     @pytest.mark.skip_if_version_below("7.2.0")
     @pytest.mark.parametrize("cluster_mode", [True, False])
@@ -117,17 +120,16 @@ class TestGlideClients:
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
     async def test_send_and_receive_large_values(self, request, cluster_mode, protocol):
-        glide_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=5000
-        )
-        length = 2**25  # 33mb
-        key = "0" * length
-        value = "0" * length
-        assert len(key) == length
-        assert len(value) == length
-        await glide_client.set(key, value)
-        assert await glide_client.get(key) == value.encode()
-        await glide_client.close()
+        ) as glide_client:
+            length = 2**25  # 33mb
+            key = "0" * length
+            value = "0" * length
+            assert len(key) == length
+            assert len(value) == length
+            await glide_client.set(key, value)
+            assert await glide_client.get(key) == value.encode()
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -178,33 +180,32 @@ class TestGlideClients:
 
             with pytest.raises(ClosingError, match="NOAUTH"):
                 # Creation of a new client without password should fail
-                await create_client(
+                async with create_client(
                     request,
                     is_cluster,
                     addresses=glide_client.config.addresses,
-                )
+                ):
+                    pass
 
-            auth_client = await create_client(
+            async with create_client(
                 request,
                 is_cluster,
                 credentials,
                 addresses=glide_client.config.addresses,
-            )
-            key = get_random_string(10)
-            assert await auth_client.set(key, key) == OK
-            assert await auth_client.get(key) == key.encode()
-            await auth_client.close()
+            ) as auth_client:
+                key = get_random_string(10)
+                assert await auth_client.set(key, key) == OK
+                assert await auth_client.get(key) == key.encode()
 
         finally:
             # Reset the password
-            auth_client = await create_client(
+            async with create_client(
                 request,
                 is_cluster,
                 credentials,
                 addresses=glide_client.config.addresses,
-            )
-            await auth_client.custom_command(["CONFIG", "SET", "requirepass", ""])
-            await auth_client.close()
+            ) as auth_client:
+                await auth_client.custom_command(["CONFIG", "SET", "requirepass", ""])
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -237,48 +238,51 @@ class TestGlideClients:
             assert await glide_client.set(key, key) == OK
             credentials = ServerCredentials(password, username)
 
-            testuser_client = await create_client(
+            async with create_client(
                 request,
                 is_cluster,
                 credentials,
                 addresses=glide_client.config.addresses,
-            )
-            assert await testuser_client.get(key) == key.encode()
-            with pytest.raises(RequestError) as e:
-                # This client isn't authorized to perform SET
-                await testuser_client.set("foo", "bar")
-            assert "NOPERM" in str(e)
-            await testuser_client.close()
+            ) as testuser_client:
+                assert await testuser_client.get(key) == key.encode()
+                with pytest.raises(RequestError) as e:
+                    # This client isn't authorized to perform SET
+                    await testuser_client.set("foo", "bar")
+                assert "NOPERM" in str(e)
         finally:
             # Delete this user
             await glide_client.custom_command(["ACL", "DELUSER", username])
 
     @pytest.mark.parametrize("cluster_mode", [False])
     async def test_select_standalone_database_id(self, request, cluster_mode):
-        glide_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, database_id=4
-        )
-        client_info = await glide_client.custom_command(["CLIENT", "INFO"])
-        assert b"db=4" in client_info
-        await glide_client.close()
+        ) as glide_client:
+            client_info = await glide_client.custom_command(["CLIENT", "INFO"])
+            assert b"db=4" in client_info
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
     async def test_client_name(self, request, cluster_mode, protocol):
-        glide_client = await create_client(
+        async with create_client(
             request,
             cluster_mode=cluster_mode,
             client_name="TEST_CLIENT_NAME",
             protocol=protocol,
-        )
-        client_info = await glide_client.custom_command(["CLIENT", "INFO"])
-        assert b"name=TEST_CLIENT_NAME" in client_info
-        await glide_client.close()
+        ) as glide_client:
+            client_info = await glide_client.custom_command(["CLIENT", "INFO"])
+            assert b"name=TEST_CLIENT_NAME" in client_info
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
-    async def test_closed_client_raises_error(self, glide_client: TGlideClient):
-        await glide_client.close()
+    async def test_closed_client_raises_error(self, request, cluster_mode, protocol):
+        async with create_client(
+            request,
+            cluster_mode=cluster_mode,
+            client_name="TEST_CLIENT_NAME",
+            protocol=protocol,
+        ) as glide_client:
+            pass
         with pytest.raises(ClosingError) as e:
             await glide_client.set("foo", "bar")
         assert "the client is closed" in str(e)
@@ -300,19 +304,16 @@ class TestGlideClients:
         cluster_mode: bool,
         protocol: ProtocolVersion,
     ):
-
-        client = await create_client(
+        async with create_client(
             request,
             cluster_mode,
             protocol=protocol,
             request_timeout=2000,
             connection_timeout=2000,
-        )
-        assert isinstance(client, (GlideClient, GlideClusterClient))
+        ) as client:
+            assert isinstance(client, (GlideClient, GlideClusterClient))
 
-        assert await client.set("key", "value") == "OK"
-
-        await client.close()
+            assert await client.set("key", "value") == "OK"
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -322,62 +323,58 @@ class TestGlideClients:
         cluster_mode: bool,
         protocol: ProtocolVersion,
     ):
-        client = await create_client(
+        async with create_client(
             request,
             cluster_mode,
             protocol=protocol,
             request_timeout=20000,  # 20 seconds timeout
-        )
+        ) as client:
 
-        async def run_debug_sleep():
-            """
-            Run a long-running DEBUG SLEEP command.
-            """
-            command = ["DEBUG", "sleep", "7"]
-            if isinstance(client, GlideClusterClient):
-                await client.custom_command(command, AllNodes())
-            else:
-                await client.custom_command(command)
+            async def run_debug_sleep():
+                """
+                Run a long-running DEBUG SLEEP command.
+                """
+                command = ["DEBUG", "sleep", "7"]
+                if isinstance(client, GlideClusterClient):
+                    await client.custom_command(command, AllNodes())
+                else:
+                    await client.custom_command(command)
 
-        async def fail_to_connect_to_client():
-            # try to connect with a small timeout connection
-            await asyncio.sleep(1)
-            with pytest.raises(ClosingError) as e:
-                await create_client(
+            async def fail_to_connect_to_client():
+                # try to connect with a small timeout connection
+                await asyncio.sleep(1)
+                with pytest.raises(ClosingError) as e:
+                    async with create_client(
+                        request,
+                        cluster_mode,
+                        protocol=protocol,
+                        connection_timeout=100,  # 100 ms
+                        reconnect_strategy=BackoffStrategy(
+                            1, 100, 2
+                        ),  # needs to be configured so that we wont be connected within 7 seconds bc of default retries
+                    ):
+                        pass
+                assert "timed out" in str(e)
+
+            async def connect_to_client():
+                # Create a second client with a connection timeout of 7 seconds
+                await asyncio.sleep(1)
+                async with create_client(
                     request,
                     cluster_mode,
                     protocol=protocol,
-                    connection_timeout=100,  # 100 ms
-                    reconnect_strategy=BackoffStrategy(
-                        1, 100, 2
-                    ),  # needs to be configured so that we wont be connected within 7 seconds bc of default retries
-                )
-            assert "timed out" in str(e)
+                    connection_timeout=10000,  # 10-second connection timeout
+                    reconnect_strategy=BackoffStrategy(1, 100, 2),
+                ) as timeout_client:
+                    # Ensure the second client can connect and perform a simple operation
+                    assert await timeout_client.set("key", "value") == "OK"
 
-        async def connect_to_client():
-            # Create a second client with a connection timeout of 7 seconds
-            await asyncio.sleep(1)
-            timeout_client = await create_client(
-                request,
-                cluster_mode,
-                protocol=protocol,
-                connection_timeout=10000,  # 10-second connection timeout
-                reconnect_strategy=BackoffStrategy(1, 100, 2),
-            )
-
-            # Ensure the second client can connect and perform a simple operation
-            assert await timeout_client.set("key", "value") == "OK"
-            await timeout_client.close()
-
-        # Run tests
-        await asyncio.gather(run_debug_sleep(), fail_to_connect_to_client())
-        await asyncio.gather(run_debug_sleep(), connect_to_client())
-
-        # Clean up the main client
-        await client.close()
+            # Run tests
+            await asyncio.gather(run_debug_sleep(), fail_to_connect_to_client())
+            await asyncio.gather(run_debug_sleep(), connect_to_client())
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestCommands:
     @pytest.mark.smoke_test
     @pytest.mark.parametrize("cluster_mode", [True, False])
@@ -411,30 +408,29 @@ class TestCommands:
         self, cluster_mode, protocol, inflight_requests_limit, request
     ):
         key1 = f"{{nonexistinglist}}1-{get_random_string(10)}"
-        test_client = await create_client(
+        async with create_client(
             request=request,
             protocol=protocol,
             cluster_mode=cluster_mode,
             inflight_requests_limit=inflight_requests_limit,
-        )
+        ) as test_client:
+            tasks = []
+            for i in range(inflight_requests_limit + 1):
+                coro = test_client.blpop([key1], 0)
+                task = asyncio.create_task(coro)
+                tasks.append(task)
 
-        tasks = []
-        for i in range(inflight_requests_limit + 1):
-            coro = test_client.blpop([key1], 0)
-            task = asyncio.create_task(coro)
-            tasks.append(task)
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
 
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                with pytest.raises(RequestError) as e:
+                    await task
+                assert "maximum inflight requests" in str(e)
 
-        for task in done:
-            with pytest.raises(RequestError) as e:
-                await task
-            assert "maximum inflight requests" in str(e)
-
-        for task in pending:
-            task.cancel()
-
-        await test_client.close()
+            for task in pending:
+                task.cancel()
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -5541,64 +5537,68 @@ class TestCommands:
             == stream_id2.encode()
         )
 
-        test_client = await create_client(
+        async with create_client(
             request=request,
             protocol=protocol,
             cluster_mode=cluster_mode,
             request_timeout=900,
-        )
-        # ensure command doesn't time out even if timeout > request timeout
-        assert (
-            await test_client.xread(
-                {key1: stream_id2}, StreamReadOptions(block_ms=1000)
+        ) as test_client:
+            # ensure command doesn't time out even if timeout > request timeout
+            assert (
+                await test_client.xread(
+                    {key1: stream_id2}, StreamReadOptions(block_ms=1000)
+                )
+                is None
             )
-            is None
-        )
 
-        async def endless_xread_call():
-            await test_client.xread({key1: stream_id2}, StreamReadOptions(block_ms=0))
+            async def endless_xread_call():
+                await test_client.xread(
+                    {key1: stream_id2}, StreamReadOptions(block_ms=0)
+                )
 
-        # when xread is called with a block timeout of 0, it should never timeout, but we wrap the test with a timeout
-        # to avoid the test getting stuck forever.
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(endless_xread_call(), timeout=3)
+            # when xread is called with a block timeout of 0, it should never timeout, but we wrap the test with a timeout
+            # to avoid the test getting stuck forever.
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(endless_xread_call(), timeout=3)
 
-        # if count is non-positive, it is ignored
-        assert await glide_client.xread(
-            {key1: stream_id0}, StreamReadOptions(count=0)
-        ) == {
-            key1.encode(): {
-                stream_id1.encode(): [[b"f1", b"v1"]],
-                stream_id2.encode(): [[b"f2", b"v2"]],
-            },
-        }
-        assert await glide_client.xread(
-            {key1: stream_id0}, StreamReadOptions(count=-1)
-        ) == {
-            key1.encode(): {
-                stream_id1.encode(): [[b"f1", b"v1"]],
-                stream_id2.encode(): [[b"f2", b"v2"]],
-            },
-        }
+            # if count is non-positive, it is ignored
+            assert await glide_client.xread(
+                {key1: stream_id0}, StreamReadOptions(count=0)
+            ) == {
+                key1.encode(): {
+                    stream_id1.encode(): [[b"f1", b"v1"]],
+                    stream_id2.encode(): [[b"f2", b"v2"]],
+                },
+            }
+            assert await glide_client.xread(
+                {key1: stream_id0}, StreamReadOptions(count=-1)
+            ) == {
+                key1.encode(): {
+                    stream_id1.encode(): [[b"f1", b"v1"]],
+                    stream_id2.encode(): [[b"f2", b"v2"]],
+                },
+            }
 
-        # invalid stream ID
-        with pytest.raises(RequestError):
-            await glide_client.xread({key1: "invalid_stream_id"})
+            # invalid stream ID
+            with pytest.raises(RequestError):
+                await glide_client.xread({key1: "invalid_stream_id"})
 
-        # invalid argument - block cannot be negative
-        with pytest.raises(RequestError):
-            await glide_client.xread({key1: stream_id1}, StreamReadOptions(block_ms=-1))
+            # invalid argument - block cannot be negative
+            with pytest.raises(RequestError):
+                await glide_client.xread(
+                    {key1: stream_id1}, StreamReadOptions(block_ms=-1)
+                )
 
-        # invalid argument - keys_and_ids must not be empty
-        with pytest.raises(RequestError):
-            await glide_client.xread({})
+            # invalid argument - keys_and_ids must not be empty
+            with pytest.raises(RequestError):
+                await glide_client.xread({})
 
-        # key exists, but it is not a stream
-        assert await glide_client.set(string_key, "foo")
-        with pytest.raises(RequestError):
-            await glide_client.xread({string_key: stream_id1, key1: stream_id1})
-        with pytest.raises(RequestError):
-            await glide_client.xread({key1: stream_id1, string_key: stream_id1})
+            # key exists, but it is not a stream
+            assert await glide_client.set(string_key, "foo")
+            with pytest.raises(RequestError):
+                await glide_client.xread({string_key: stream_id1, key1: stream_id1})
+            with pytest.raises(RequestError):
+                await glide_client.xread({key1: stream_id1, string_key: stream_id1})
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -5937,73 +5937,73 @@ class TestCommands:
                 {key: stream_id1_1}, "non_existing_group", consumer_name
             )
 
-        test_client = await create_client(
+        async with create_client(
             request=request,
             protocol=protocol,
             cluster_mode=cluster_mode,
             request_timeout=900,
-        )
-        timeout_key = f"{{testKey}}{get_random_string(10)}"
-        timeout_group_name = get_random_string(10)
-        timeout_consumer_name = get_random_string(10)
+        ) as test_client:
+            timeout_key = f"{{testKey}}{get_random_string(10)}"
+            timeout_group_name = get_random_string(10)
+            timeout_consumer_name = get_random_string(10)
 
-        # create a group read with the test client
-        # add a single stream entry and consumer
-        # the first call to ">" will return and update consumer group
-        # the second call to ">" will block waiting for new entries
-        # using anything other than ">" won't block, but will return the empty consumer result
-        # see: https://github.com/redis/redis/issues/6587
-        assert (
-            await test_client.xgroup_create(
-                timeout_key,
-                timeout_group_name,
-                stream_id0,
-                StreamGroupOptions(make_stream=True),
+            # create a group read with the test client
+            # add a single stream entry and consumer
+            # the first call to ">" will return and update consumer group
+            # the second call to ">" will block waiting for new entries
+            # using anything other than ">" won't block, but will return the empty consumer result
+            # see: https://github.com/redis/redis/issues/6587
+            assert (
+                await test_client.xgroup_create(
+                    timeout_key,
+                    timeout_group_name,
+                    stream_id0,
+                    StreamGroupOptions(make_stream=True),
+                )
+                == OK
             )
-            == OK
-        )
-        assert (
-            await test_client.xgroup_create_consumer(
-                timeout_key, timeout_group_name, timeout_consumer_name
+            assert (
+                await test_client.xgroup_create_consumer(
+                    timeout_key, timeout_group_name, timeout_consumer_name
+                )
+                is True
             )
-            is True
-        )
-        assert (
-            await test_client.xadd(
-                timeout_key, [("f1", "v1")], StreamAddOptions(stream_id1_1)
-            )
-            == stream_id1_1.encode()
-        )
-
-        # read the entire stream for the consumer and mark messages as pending
-        assert await test_client.xreadgroup(
-            {timeout_key: ">"}, timeout_group_name, timeout_consumer_name
-        ) == {timeout_key.encode(): {stream_id1_1.encode(): [[b"f1", b"v1"]]}}
-
-        # subsequent calls to read ">" will block
-        assert (
-            await test_client.xreadgroup(
-                {timeout_key: ">"},
-                timeout_group_name,
-                timeout_consumer_name,
-                StreamReadGroupOptions(block_ms=1000),
-            )
-            is None
-        )
-
-        # ensure that command doesn't time out even if timeout > request timeout
-        async def endless_xreadgroup_call():
-            await test_client.xreadgroup(
-                {timeout_key: ">"},
-                timeout_group_name,
-                timeout_consumer_name,
-                StreamReadGroupOptions(block_ms=0),
+            assert (
+                await test_client.xadd(
+                    timeout_key, [("f1", "v1")], StreamAddOptions(stream_id1_1)
+                )
+                == stream_id1_1.encode()
             )
 
-        # when xreadgroup is called with a block timeout of 0, it should never timeout, but we wrap the test with a
-        # timeout to avoid the test getting stuck forever.
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(endless_xreadgroup_call(), timeout=3)
+            # read the entire stream for the consumer and mark messages as pending
+            assert await test_client.xreadgroup(
+                {timeout_key: ">"}, timeout_group_name, timeout_consumer_name
+            ) == {timeout_key.encode(): {stream_id1_1.encode(): [[b"f1", b"v1"]]}}
+
+            # subsequent calls to read ">" will block
+            assert (
+                await test_client.xreadgroup(
+                    {timeout_key: ">"},
+                    timeout_group_name,
+                    timeout_consumer_name,
+                    StreamReadGroupOptions(block_ms=1000),
+                )
+                is None
+            )
+
+            # ensure that command doesn't time out even if timeout > request timeout
+            async def endless_xreadgroup_call():
+                await test_client.xreadgroup(
+                    {timeout_key: ">"},
+                    timeout_group_name,
+                    timeout_consumer_name,
+                    StreamReadGroupOptions(block_ms=0),
+                )
+
+            # when xreadgroup is called with a block timeout of 0, it should never timeout, but we wrap the test with a
+            # timeout to avoid the test getting stuck forever.
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(endless_xreadgroup_call(), timeout=3)
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -8428,44 +8428,47 @@ class TestCommands:
         assert await glide_client.function_load(code, replace=True) == lib_name.encode()
 
         # create a second client to run fcall
-        test_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=30000
-        )
+        ) as test_client:
+            async with create_client(
+                request,
+                cluster_mode=cluster_mode,
+                protocol=protocol,
+                request_timeout=30000,
+            ) as test_client2:
 
-        test_client2 = await create_client(
-            request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=30000
-        )
+                async def endless_fcall_route_call():
+                    await test_client.fcall_ro(func_name, arguments=[])
 
-        async def endless_fcall_route_call():
-            await test_client.fcall_ro(func_name, arguments=[])
+                async def wait_and_function_stats():
+                    # it can take a few seconds for FCALL to register as running
+                    await asyncio.sleep(3)
+                    result = await test_client2.function_stats()
+                    running_scripts = False
+                    for res in result.values():
+                        if res.get(b"running_script"):
+                            if running_scripts:
+                                raise Exception(
+                                    "Already running script on a different node"
+                                )
+                            running_scripts = True
+                            assert (
+                                res.get(b"running_script").get(b"name")
+                                == func_name.encode()
+                            )
+                            assert res.get(b"running_script").get(b"command") == [
+                                b"FCALL_RO",
+                                func_name.encode(),
+                                b"0",
+                            ]
+                            assert res.get(b"running_script").get(b"duration_ms") > 0
 
-        async def wait_and_function_stats():
-            # it can take a few seconds for FCALL to register as running
-            await asyncio.sleep(3)
-            result = await test_client2.function_stats()
-            running_scripts = False
-            for res in result.values():
-                if res.get(b"running_script"):
-                    if running_scripts:
-                        raise Exception("Already running script on a different node")
-                    running_scripts = True
-                    assert res.get(b"running_script").get(b"name") == func_name.encode()
-                    assert res.get(b"running_script").get(b"command") == [
-                        b"FCALL_RO",
-                        func_name.encode(),
-                        b"0",
-                    ]
-                    assert res.get(b"running_script").get(b"duration_ms") > 0
+                    assert running_scripts
 
-            assert running_scripts
-
-        await asyncio.gather(
-            endless_fcall_route_call(),
-            wait_and_function_stats(),
-        )
-
-        await test_client.close()
-        await test_client2.close()
+                await asyncio.gather(
+                    endless_fcall_route_call(), wait_and_function_stats()
+                )
 
     @pytest.mark.skip_if_version_below("7.0.0")
     @pytest.mark.parametrize("cluster_mode", [True])
@@ -8551,43 +8554,42 @@ class TestCommands:
         assert await glide_client.function_load(code, replace=True) == lib_name.encode()
 
         # create a second client to run fcall
-        test_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=15000
-        )
+        ) as test_client:
 
-        async def endless_fcall_route_call():
-            # fcall is supposed to be killed, and will return a RequestError
+            async def endless_fcall_route_call():
+                # fcall is supposed to be killed, and will return a RequestError
+                with pytest.raises(RequestError) as e:
+                    await test_client.fcall_ro(func_name, arguments=[])
+                assert "Script killed by user" in str(e)
+
+            async def wait_and_function_kill():
+                # it can take a few seconds for FCALL to register as running
+                await asyncio.sleep(3)
+                timeout = 0
+                while timeout <= 5:
+                    # keep trying to kill until we get an "OK"
+                    try:
+                        result = await glide_client.function_kill()
+                        #  we expect to get success
+                        assert result == "OK"
+                        break
+                    except RequestError:
+                        # a RequestError may occur if the function is not yet running
+                        # sleep and try again
+                        timeout += 0.5
+                        await asyncio.sleep(0.5)
+
+            await asyncio.gather(
+                endless_fcall_route_call(),
+                wait_and_function_kill(),
+            )
+
+            # no functions running so we get notbusy error again
             with pytest.raises(RequestError) as e:
-                await test_client.fcall_ro(func_name, arguments=[])
-            assert "Script killed by user" in str(e)
-
-        async def wait_and_function_kill():
-            # it can take a few seconds for FCALL to register as running
-            await asyncio.sleep(3)
-            timeout = 0
-            while timeout <= 5:
-                # keep trying to kill until we get an "OK"
-                try:
-                    result = await glide_client.function_kill()
-                    #  we expect to get success
-                    assert result == "OK"
-                    break
-                except RequestError:
-                    # a RequestError may occur if the function is not yet running
-                    # sleep and try again
-                    timeout += 0.5
-                    await asyncio.sleep(0.5)
-
-        await asyncio.gather(
-            endless_fcall_route_call(),
-            wait_and_function_kill(),
-        )
-
-        # no functions running so we get notbusy error again
-        with pytest.raises(RequestError) as e:
-            assert await glide_client.function_kill()
-        assert "NotBusy" in str(e)
-        await test_client.close()
+                assert await glide_client.function_kill()
+            assert "NotBusy" in str(e)
 
     @pytest.mark.skip_if_version_below("7.0.0")
     @pytest.mark.parametrize("cluster_mode", [False, True])
@@ -8603,39 +8605,34 @@ class TestCommands:
         assert await glide_client.function_load(code, replace=True) == lib_name.encode()
 
         # create a second client to run fcall - and give it a long timeout
-        test_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=15000
-        )
+        ) as test_client:
+            # call fcall to run the function loaded function
+            async def endless_fcall_route_call():
+                # fcall won't be killed, because kill only works against fcalls that don't make a write operation
+                # use fcall(key) so that it makes a write operation
+                await test_client.fcall(func_name, keys=[lib_name])
 
-        # call fcall to run the function loaded function
-        async def endless_fcall_route_call():
-            # fcall won't be killed, because kill only works against fcalls that don't make a write operation
-            # use fcall(key) so that it makes a write operation
-            await test_client.fcall(func_name, keys=[lib_name])
+            async def wait_and_function_kill():
+                # it can take a few seconds for FCALL to register as running
+                await asyncio.sleep(3)
+                timeout = 0
+                foundUnkillable = False
+                while timeout <= 5:
+                    # keep trying to kill until we get a unkillable return error
+                    try:
+                        await glide_client.function_kill()
+                    except RequestError as e:
+                        if "UNKILLABLE" in str(e):
+                            foundUnkillable = True
+                            break
+                    timeout += 0.5
+                    await asyncio.sleep(0.5)
+                # expect an unkillable error
+                assert foundUnkillable
 
-        async def wait_and_function_kill():
-            # it can take a few seconds for FCALL to register as running
-            await asyncio.sleep(3)
-            timeout = 0
-            foundUnkillable = False
-            while timeout <= 5:
-                # keep trying to kill until we get a unkillable return error
-                try:
-                    await glide_client.function_kill()
-                except RequestError as e:
-                    if "UNKILLABLE" in str(e):
-                        foundUnkillable = True
-                        break
-                timeout += 0.5
-                await asyncio.sleep(0.5)
-            # expect an unkillable error
-            assert foundUnkillable
-
-        await asyncio.gather(
-            endless_fcall_route_call(),
-            wait_and_function_kill(),
-        )
-        await test_client.close()
+            await asyncio.gather(endless_fcall_route_call(), wait_and_function_kill())
 
     @pytest.mark.skip_if_version_below("7.0.0")
     @pytest.mark.parametrize("cluster_mode", [True])
@@ -9476,7 +9473,6 @@ class TestCommands:
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
     async def test_unwatch(self, glide_client: GlideClient):
-
         # watched key unwatched before transaction execution even if changed
         # outside of transaction, transaction will still execute
         assert await glide_client.set("key1", "original_value") == OK
@@ -9744,7 +9740,7 @@ class TestCommandsUnitTests:
         assert is_single_response(None, None)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestClusterRoutes:
     async def cluster_route_custom_command_multi_nodes(
         self,
@@ -9819,7 +9815,8 @@ class TestClusterRoutes:
         route_class = SlotKeyRoute if is_slot_key else SlotIdRoute
         route_second_arg = "foo" if is_slot_key else 4000
         primary_res = await glide_client.custom_command(
-            ["CLUSTER", "NODES"], route_class(SlotType.PRIMARY, route_second_arg)  # type: ignore
+            ["CLUSTER", "NODES"],
+            route_class(SlotType.PRIMARY, route_second_arg),  # type: ignore
         )
         assert isinstance(primary_res, bytes)
         primary_res = primary_res.decode()
@@ -9832,7 +9829,8 @@ class TestClusterRoutes:
                 expected_primary_node_id = node_line.split(" ")[0]
 
         replica_res = await glide_client.custom_command(
-            ["CLUSTER", "NODES"], route_class(SlotType.REPLICA, route_second_arg)  # type: ignore
+            ["CLUSTER", "NODES"],
+            route_class(SlotType.REPLICA, route_second_arg),  # type: ignore
         )
         assert isinstance(replica_res, bytes)
         replica_res = replica_res.decode()
@@ -10213,7 +10211,8 @@ class TestClusterRoutes:
         assert result[result_cursor_index] == initial_cursor.encode()
         assert len(result_collection) == len(char_map) * 2
         assert convert_list_to_dict(result_collection) == cast(
-            dict, convert_string_to_bytes_object(char_map)  # type: ignore
+            dict,
+            convert_string_to_bytes_object(char_map),  # type: ignore
         )
 
         result = await glide_client.hscan(key1, initial_cursor, match="field a")
@@ -10354,10 +10353,8 @@ async def script_kill_tests(
             await glide_client.script_kill()
     assert "No scripts in execution right now" in str(e)
 
-    await test_client.close()
 
-
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestScripts:
     @pytest.mark.smoke_test
     @pytest.mark.parametrize("cluster_mode", [True, False])
@@ -10420,47 +10417,45 @@ class TestScripts:
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
     async def test_script_large_keys_no_args(self, request, cluster_mode, protocol):
-        glide_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=5000
-        )
-        length = 2**13  # 8kb
-        key = "0" * length
-        script = Script("return KEYS[1]")
-        assert await glide_client.invoke_script(script, keys=[key]) == key.encode()
-        await glide_client.close()
+        ) as glide_client:
+            length = 2**13  # 8kb
+            key = "0" * length
+            script = Script("return KEYS[1]")
+            assert await glide_client.invoke_script(script, keys=[key]) == key.encode()
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
     async def test_script_large_args_no_keys(self, request, cluster_mode, protocol):
-        glide_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=5000
-        )
-        length = 2**12  # 4kb
-        arg1 = "0" * length
-        arg2 = "1" * length
+        ) as glide_client:
+            length = 2**12  # 4kb
+            arg1 = "0" * length
+            arg2 = "1" * length
 
-        script = Script("return ARGV[2]")
-        assert (
-            await glide_client.invoke_script(script, args=[arg1, arg2]) == arg2.encode()
-        )
-        await glide_client.close()
+            script = Script("return ARGV[2]")
+            assert (
+                await glide_client.invoke_script(script, args=[arg1, arg2])
+                == arg2.encode()
+            )
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
     async def test_script_large_keys_and_args(self, request, cluster_mode, protocol):
-        glide_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=5000
-        )
-        length = 2**12  # 4kb
-        key = "0" * length
-        arg = "1" * length
+        ) as glide_client:
+            length = 2**12  # 4kb
+            key = "0" * length
+            arg = "1" * length
 
-        script = Script("return KEYS[1]")
-        assert (
-            await glide_client.invoke_script(script, keys=[key], args=[arg])
-            == key.encode()
-        )
-        await glide_client.close()
+            script = Script("return KEYS[1]")
+            assert (
+                await glide_client.invoke_script(script, keys=[key], args=[arg])
+                == key.encode()
+            )
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -10532,11 +10527,10 @@ class TestScripts:
         route = SlotKeyRoute(SlotType.PRIMARY, "1") if single_route else AllPrimaries()
 
         # Create a second client to run the script
-        test_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=30000
-        )
-
-        await script_kill_tests(glide_client, test_client, route)
+        ) as test_client:
+            await script_kill_tests(glide_client, test_client, route)
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -10548,11 +10542,10 @@ class TestScripts:
         glide_client: TGlideClient,
     ):
         # Create a second client to run the script
-        test_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=30000
-        )
-
-        await script_kill_tests(glide_client, test_client)
+        ) as test_client:
+            await script_kill_tests(glide_client, test_client)
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -10560,51 +10553,52 @@ class TestScripts:
         self, request, cluster_mode, protocol, glide_client: TGlideClient
     ):
         # Create a second client to run the script
-        test_client = await create_client(
+        async with create_client(
             request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=30000
-        )
+        ) as test_client:
+            # Create a second client to kill the script
+            async with create_client(
+                request,
+                cluster_mode=cluster_mode,
+                protocol=protocol,
+                request_timeout=15000,
+            ) as test_client2:
+                await script_kill_tests(glide_client, test_client, test_client2)
 
-        # Create a second client to kill the script
-        test_client2 = await create_client(
-            request, cluster_mode=cluster_mode, protocol=protocol, request_timeout=15000
-        )
+                # Add test for script_kill with writing script
+                writing_script = Script(
+                    """
+                    redis.call('SET', KEYS[1], 'value')
+                    local start = redis.call('TIME')[1]
+                    while redis.call('TIME')[1] - start < 15 do
+                        redis.call('SET', KEYS[1], 'value')
+                    end
+                """
+                )
 
-        # Add test for script_kill with writing script
-        writing_script = Script(
-            """
-            redis.call('SET', KEYS[1], 'value')
-            local start = redis.call('TIME')[1]
-            while redis.call('TIME')[1] - start < 15 do
-                redis.call('SET', KEYS[1], 'value')
-            end
-        """
-        )
+                async def run_writing_script():
+                    await test_client.invoke_script(
+                        writing_script, keys=[get_random_string(5)]
+                    )
 
-        async def run_writing_script():
-            await test_client.invoke_script(writing_script, keys=[get_random_string(5)])
+                async def attempt_kill_writing_script():
+                    await asyncio.sleep(3)  # Give some time for the script to start
+                    foundUnkillable = False
+                    while True:
+                        try:
+                            await test_client2.script_kill()
+                        except RequestError as e:
+                            if "UNKILLABLE" in str(e):
+                                foundUnkillable = True
+                                break
+                            await asyncio.sleep(0.5)
 
-        async def attempt_kill_writing_script():
-            await asyncio.sleep(3)  # Give some time for the script to start
-            foundUnkillable = False
-            while True:
-                try:
-                    await test_client2.script_kill()
-                except RequestError as e:
-                    if "UNKILLABLE" in str(e):
-                        foundUnkillable = True
-                        break
-                    await asyncio.sleep(0.5)
+                    assert foundUnkillable
 
-            assert foundUnkillable
-
-        # Run the writing script and attempt to kill it
-        await asyncio.gather(
-            run_writing_script(),
-            attempt_kill_writing_script(),
-        )
-
-        await test_client.close()
-        await test_client2.close()
+                # Run the writing script and attempt to kill it
+                await asyncio.gather(
+                    run_writing_script(), attempt_kill_writing_script()
+                )
 
     @pytest.mark.skip_if_version_below("8.0.0")
     @pytest.mark.parametrize("cluster_mode", [True, False])

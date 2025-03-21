@@ -7,6 +7,7 @@ from glide.config import ProtocolVersion
 from glide.constants import OK
 from glide.exceptions import RequestError
 from glide.glide_client import TGlideClient
+
 from tests.conftest import (
     NEW_PASSWORD,
     WRONG_PASSWORD,
@@ -16,7 +17,7 @@ from tests.conftest import (
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestAuthCommands:
     """Test cases for password authentication and management"""
 
