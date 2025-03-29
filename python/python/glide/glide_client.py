@@ -141,23 +141,19 @@ class BaseClient(CoreCommands):
             "new connection established",
         )
 
-        try:
-            async with AsyncExitStack() as stack:
-                self._task_group = await stack.enter_async_context(
-                    anyio.create_task_group()
-                )
+        async with AsyncExitStack() as stack:
+            self._task_group = await stack.enter_async_context(
+                anyio.create_task_group()
+            )
 
-                # Start the reader loop as a background task
-                self._task_group.start_soon(self._stream_demuxer)
+            # Start the reader loop as a background task
+            self._task_group.start_soon(self._stream_demuxer)
 
-                # Set the client configurations
-                await self._set_connection_configurations()
+            # Set the client configurations
+            await self._set_connection_configurations()
 
-                self._task_exitstack = stack.pop_all()
-        except Exception as e:
-            if hasattr(e, "_exceptions") and len(e._exceptions) == 1:
-                raise e._exceptions[0]
-            raise
+            self._task_exitstack = stack.pop_all()
+
         return self
 
     async def __aexit__(
